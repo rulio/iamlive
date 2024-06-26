@@ -46,8 +46,10 @@ find . ! -name "api-list.json" -type f -exec sh -c "cat <<< \$(jq -c '{basePath,
 //go:embed google-api-go-client/*
 var gcpServiceFiles embed.FS
 
-var serviceDefinitions []ServiceDefinition
-var gcpServiceDefinitions []GCPServiceDefinition
+var (
+	serviceDefinitions    []ServiceDefinition
+	gcpServiceDefinitions []GCPServiceDefinition
+)
 
 func loadCAKeys() error {
 	var caCert []byte
@@ -165,7 +167,7 @@ func dumpReq(req *http.Request) {
 	fmt.Printf("%v\n", string(dump))
 }
 
-func createProxy(addr string) {
+func createProxy(addr string, awsRedirectHost string) {
 	err := loadCAKeys()
 	if err != nil {
 		log.Fatal(err)
@@ -176,8 +178,7 @@ func createProxy(addr string) {
 	proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) { // TODO: Move to onResponse for HTTP response codes
 		var body []byte
-
-		isAWSHostname, _ := regexp.MatchString(`^.*\.amazonaws\.com(?:\.cn)?$`, req.Host)
+		isAWSHostname, _ := regexp.MatchString(`^.*\.amazonaws\.com(?:\.cn)?$|^.*.localstack(\:\d{1,6})?`, req.Host)
 		isAzureHostname, _ := regexp.MatchString(`^(?:management\.azure\.com)|(?:management\.core\.windows\.net)$`, req.Host)
 		isGCPHostname, _ := regexp.MatchString(`^.*\.googleapis\.com$`, req.Host)
 
@@ -185,12 +186,19 @@ func createProxy(addr string) {
 			if *debugFlag {
 				dumpReq(req)
 			}
+
 			body, _ = ioutil.ReadAll(req.Body)
 			handleAWSRequest(req, body, 200)
+
+			if awsRedirectHost != "" {
+				req.URL.Host = awsRedirectHost
+				req.Host = awsRedirectHost
+			}
 		} else if isAzureHostname && *providerFlag == "azure" {
 			if *debugFlag {
 				dumpReq(req)
 			}
+
 			body, _ = ioutil.ReadAll(req.Body)
 			handleAzureRequest(req, body, 200)
 		} else if isGCPHostname && *providerFlag == "gcp" {
@@ -427,8 +435,8 @@ func handleAWSRequest(req *http.Request, body []byte, respCode int) {
 		copy(hostSplit[len(hostSplit)-3:], hostSplit[len(hostSplit)-4:]) // shift over
 		hostSplit[len(hostSplit)-4] = "s3"                               // insert s3
 	}
-
-	if hostSplit[len(hostSplit)-1] == "com" && hostSplit[len(hostSplit)-2] == "amazonaws" {
+	isLocalStack := hostSplit[len(hostSplit)-1] == "localstack:4566"
+	if isLocalStack || (hostSplit[len(hostSplit)-1] == "com" && hostSplit[len(hostSplit)-2] == "amazonaws") {
 		endpointPrefix := hostSplit[len(hostSplit)-3] // "s3".amazonaws.com
 		if len(hostSplit) > 3 {
 			endpointPrefix = hostSplit[len(hostSplit)-4] // "s3".us-east-1.amazonaws.com
@@ -444,7 +452,6 @@ func handleAWSRequest(req *http.Request, body []byte, respCode int) {
 			} else {
 				endpointUriPrefix = strings.Join(hostSplit[:len(hostSplit)-4], ".") // "bucket.name".s3.us-east-1.amazonaws.com
 			}
-
 		}
 		for _, serviceDefinition := range serviceDefinitions {
 			if serviceDefinition.Metadata.EndpointPrefix == endpointPrefix { // TODO: Ensure latest version
@@ -850,7 +857,7 @@ func gcpProcessResource(req *http.Request, gcpResource GCPResourceDefinition, ba
 
 	for _, gcpMethod := range gcpResource.Methods {
 		if req.Method == gcpMethod.HTTPMethod {
-			pathtemplate := generateMethodTemplate(basePath+gcpMethod.FlatPath)
+			pathtemplate := generateMethodTemplate(basePath + gcpMethod.FlatPath)
 
 			r, err := regexp.Compile(pathtemplate)
 			if err == nil && r.MatchString(req.URL.Path) {

@@ -13,24 +13,27 @@ import (
 )
 
 // CLI args
-var providerFlag *string
-var setiniFlag *bool
-var profileFlag *string
-var failsonlyFlag *bool
-var outputFileFlag *string
-var refreshRateFlag *int
-var sortAlphabeticalFlag *bool
-var hostFlag *string
-var modeFlag *string
-var bindAddrFlag *string
-var caBundleFlag *string
-var caKeyFlag *string
-var accountIDFlag *string
-var backgroundFlag *bool
-var debugFlag *bool
-var forceWildcardResourceFlag *bool
-var cpuProfileFlag = flag.String("cpu-profile", "", "write a CPU profile to this file (for performance testing purposes)")
-var csmPortFlag *int
+var (
+	providerFlag              *string
+	setiniFlag                *bool
+	profileFlag               *string
+	failsonlyFlag             *bool
+	outputFileFlag            *string
+	refreshRateFlag           *int
+	sortAlphabeticalFlag      *bool
+	hostFlag                  *string
+	modeFlag                  *string
+	bindAddrFlag              *string
+	caBundleFlag              *string
+	caKeyFlag                 *string
+	accountIDFlag             *string
+	backgroundFlag            *bool
+	debugFlag                 *bool
+	forceWildcardResourceFlag *bool
+	cpuProfileFlag            = flag.String("cpu-profile", "", "write a CPU profile to this file (for performance testing purposes)")
+	csmPortFlag               *int
+	awsRedirectHostFlag       *string
+)
 
 func parseConfig() {
 	provider := "aws"
@@ -50,6 +53,7 @@ func parseConfig() {
 	debug := false
 	forceWildcardResource := false
 	csmPort := 31000
+	awsRedirectHost := ""
 
 	cfgfile, err := homedir.Expand("~/.iamlive/config")
 	if err == nil {
@@ -103,6 +107,10 @@ func parseConfig() {
 			if cfg.Section("").HasKey("force-wildcard-resource") {
 				forceWildcardResource, _ = cfg.Section("").Key("force-wildcard-resource").Bool()
 			}
+			if cfg.Section("").HasKey("aws-redire4ct") {
+				awsRedirectHost = cfg.Section("").Key("aws-redirect").String()
+			}
+
 		}
 	}
 
@@ -123,6 +131,7 @@ func parseConfig() {
 	debugFlag = flag.Bool("debug", debug, "dumps associated HTTP requests when set in proxy mode")
 	forceWildcardResourceFlag = flag.Bool("force-wildcard-resource", forceWildcardResource, "when set, the Resource will always be a wildcard")
 	csmPortFlag = flag.Int("csm-port", csmPort, "port to listen on for CSM")
+	awsRedirectHostFlag = flag.String("aws-redirect-host", awsRedirectHost, "redirect all AWS API calls to this endpoint")
 }
 
 func Run() {
@@ -172,13 +181,13 @@ func Run() {
 		handleLoggedCall()
 	} else if *modeFlag == "proxy" {
 		readServiceFiles()
-		createProxy(*bindAddrFlag)
+		createProxy(*bindAddrFlag, *awsRedirectHostFlag)
 	} else {
 		fmt.Println("ERROR: unknown mode")
 	}
 }
 
-func RunWithArgs(provider string, setIni bool, profile string, failsOnly bool, outputFile string, refreshRate int, sortAlphabetical bool, host, mode, bindAddr, caBundle, caKey, accountID string, background, debug, forceWildcardResource bool) {
+func RunWithArgs(provider string, setIni bool, profile string, failsOnly bool, outputFile string, refreshRate int, sortAlphabetical bool, host, mode, bindAddr, caBundle, caKey, accountID string, background, debug, forceWildcardResource bool, awsRedirectHost string) {
 	providerFlag = &provider
 	setiniFlag = &setIni
 	profileFlag = &profile
@@ -195,6 +204,7 @@ func RunWithArgs(provider string, setIni bool, profile string, failsOnly bool, o
 	backgroundFlag = &background
 	debugFlag = &debug
 	forceWildcardResourceFlag = &forceWildcardResource
+	awsRedirectHostFlag = &awsRedirectHost
 
 	if *cpuProfileFlag != "" {
 		f, err := os.Create(*cpuProfileFlag)
@@ -220,7 +230,7 @@ func RunWithArgs(provider string, setIni bool, profile string, failsOnly bool, o
 		handleLoggedCall()
 	} else if *modeFlag == "proxy" {
 		readServiceFiles()
-		createProxy(*bindAddrFlag)
+		createProxy(*bindAddrFlag, *awsRedirectHostFlag)
 	} else {
 		fmt.Println("ERROR: unknown mode")
 	}
